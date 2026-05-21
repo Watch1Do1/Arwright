@@ -1,0 +1,8 @@
+{
+  "name": "Arwright: The AI Writing Mentor",
+  "description": "An AI-powered writing tutor that coaches students through witty, challenging feedback. It features a built-in word processor with integrity monitoring and a teacher dashboard for analytics and anti-cheating reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

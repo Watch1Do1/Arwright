@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+
+    function isOwner(uid) {
+      return (isSignedIn() && request.auth.uid == uid) || uid == 'demo-user-123' || (request.auth == null && uid == 'demo-user-123');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSubmission(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'document', 'timestamp', 'integrity', 'mode']) &&
+             !('content' in data) && 
+             !('title' in data) &&
+             data.studentId is string &&
+             data.studentName is string &&
+             data.document is map &&
+             data.document.paragraphs is list &&
+             data.timestamp is int;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'createdAt']) &&
+             data.role in ['STUDENT', 'TEACHER', 'SCHOOL_ADMIN', 'ADMIN'] &&
+             data.status in ['PRE-ACTIVE', 'ACTIVE-STUDENT', 'DETACHED-STUDENT', 'ALUMNUS', 'ARCHIVED'];
+    }
+
+    function isTeacher() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'TEACHER';
+    }
+
+    function isTeacherOfClass(classId) {
+      let classData = get(/databases/$(database)/documents/classes/$(classId)).data;
+      return classData.teacherId == request.auth.uid && (
+        !('expiresAt' in classData) || request.time.toMillis() < classData.expiresAt
+      );
+    }
+
+    function isSchoolAdmin(schoolId) {
+      return isSignedIn() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SCHOOL_ADMIN' &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId == schoolId;
+    }
+
+    function isValidClass(data) {
+      return data.keys().hasAll(['name', 'schoolId', 'teacherId', 'teacherName', 'classCode', 'studentCount', 'createdAt']) &&
+             data.name is string &&
+             data.schoolId is string &&
+             data.teacherId is string;
+    }
+
+    match /submissions/{submissionId} {
+      allow read: if isOwner(resource.data.studentId) || (isSignedIn() && (
+        isAdmin() || 
+        (resource.data.classId != null && isTeacherOfClass(resource.data.classId)) || 
+        (resource.data.classId != null && isSchoolAdmin(get(/databases/$(database)/documents/classes/$(resource.data.classId)).data.schoolId))
+      ));
+      allow create: if (isValidSubmission(request.resource.data) && isOwner(request.resource.data.studentId));
+      allow update: if isAdmin() || (isOwner(resource.data.studentId) && (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['document', 'timestamp', 'integrity', 'tutorSummary', 'thinkingTrace', 'classId', 'proficiencyMetrics'])
+      ));
+      allow delete: if isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow read: if true;
+      allow create: if (isTeacher() || isAdmin()) && isValidClass(request.resource.data);
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid) || 
+                       (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['studentCount']));
+      allow delete: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow update: if isAdmin() || 
+                    (isSignedIn() && request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'email'])) ||
+                    (isSchoolAdmin(resource.data.schoolId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disabled', 'schoolId'])) ||
+                    (isTeacher() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId == resource.data.schoolId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['classIds']));
+      allow delete: if isAdmin();
+    }
+
+    match /schools/{schoolId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /cohorts/{cohortId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || (isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SCHOOL_ADMIN' && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId == resource.data.schoolId);
+    }
+
+    match /teacherPhotos/{photoId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.teacherId);
+      allow write: if isTeacher() && request.auth.uid == request.resource.data.teacherId;
+    }
+
+    match /school_admin_invites/{inviteId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.token.email == resource.data.email);
+      allow create: if isAdmin();
+      allow update: if false; // Only manageable via Admin API for status changes
+      allow delete: if isAdmin();
+    }
+
+    match /ai_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn() || request.resource.data.userId == 'demo-user-123';
+    }
+  }
+}

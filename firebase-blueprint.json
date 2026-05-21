@@ -1,0 +1,221 @@
+{
+  "entities": {
+    "Submission": {
+      "title": "Submission",
+      "description": "An academic writing submission with tracking data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "document": {
+          "type": "object",
+          "properties": {
+            "paragraphs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "text": { "type": "string" },
+                  "kind": { "enum": ["body", "title", "works-cited-title", "works-cited-entry"] }
+                }
+              }
+            }
+          }
+        },
+        "timestamp": { "type": "number" },
+        "mode": { "type": "string" },
+        "tutorSummary": { "type": "string" },
+        "integrity": {
+          "type": "object",
+          "properties": {
+            "keystrokeCount": { "type": "number" },
+            "pasteEvents": { "type": "number" },
+            "pasteCharacters": { "type": "number" },
+            "averageWPM": { "type": "number" },
+            "flagged": { "type": "boolean" },
+            "burstAlerts": { "type": "number" }
+          }
+        },
+        "thinkingTrace": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "t": { "type": "number" },
+              "len": { "type": "number" },
+              "strokes": { "type": "number" },
+              "paste": { "type": "number" },
+              "content": { "type": "string" },
+              "ai": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string" },
+                  "focus": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": ["studentId", "studentName", "document", "timestamp"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "System user with role and school affiliation",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "recoveryEmail": { "type": "string" },
+        "displayName": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "nameHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "changedAt": { "type": "number" }
+            }
+          }
+        },
+        "role": { "enum": ["STUDENT", "TEACHER", "SCHOOL_ADMIN", "ADMIN"] },
+        "status": { "enum": ["PRE-ACTIVE", "ACTIVE-STUDENT", "DETACHED-STUDENT", "ALUMNUS", "ARCHIVED"] },
+        "schoolId": { "type": "string" },
+        "cohortId": { "type": "string" },
+        "classIds": { "type": "array", "items": { "type": "string" } },
+        "disabled": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "graduationDate": { "type": "number" }
+      }
+    },
+    "Cohort": {
+      "title": "Cohort",
+      "description": "Graduating class group",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "name": { "type": "string" },
+        "graduationDate": { "type": "number" },
+        "cohortCode": { "type": "string" }
+      }
+    },
+    "Classroom": {
+      "title": "Classroom",
+      "description": "A group of students managed by a teacher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "gradeLevel": { "type": "string" },
+        "period": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "classCode": { "type": "string" },
+        "studentCount": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "expiresAt": { "type": "number" }
+      }
+    },
+    "TeacherPhoto": {
+      "title": "Teacher-Assigned Student Photo",
+      "description": "Avatar override for a student within a specific class context",
+      "type": "object",
+      "properties": {
+        "classId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "assignedAt": { "type": "number" }
+      }
+    },
+    "School": {
+      "title": "School",
+      "description": "Academic institution tracking with enrollment codes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "country": { "type": "string" },
+        "schoolType": { "type": "string" },
+        "status": { "enum": ["Prospect", "Pilot", "Active", "Paused"] },
+        "contactName": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "submissionCount": { "type": "number" },
+        "userCount": { "type": "number" }
+      }
+    },
+    "AiUsageLog": {
+      "title": "AI Usage Log",
+      "description": "Cost and usage tracking for Gemini API",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "model": { "type": "string" },
+        "totalTokens": { "type": "number" },
+        "timestamp": { "type": "number" },
+        "feature": { "type": "string" }
+      }
+    },
+    "SchoolAdminInvite": {
+      "title": "School Admin Invite",
+      "description": "Secure invitation for a parent organization administrator",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "role": { "enum": ["SCHOOL_ADMIN"] },
+        "token": { "type": "string" },
+        "status": { "enum": ["pending", "accepted", "expired"] },
+        "createdAt": { "type": "number" },
+        "expiresAt": { "type": "number" },
+        "acceptedAt": { "type": "number" },
+        "acceptedByUid": { "type": "string" }
+      },
+      "required": ["email", "schoolId", "token", "status", "createdAt", "expiresAt"]
+    }
+  },
+  "firestore": {
+    "/submissions/{submissionId}": {
+      "schema": "Submission",
+      "description": "Root collection for all writing submissions"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles and roles"
+    },
+    "/schools/{schoolId}": {
+      "schema": "School",
+      "description": "School organizations"
+    },
+    "/classes/{classId}": {
+      "schema": "Classroom",
+      "description": "Teacher-managed classes"
+    },
+    "/cohorts/{cohortId}": {
+      "schema": "Cohort",
+      "description": "Student cohorts/graduating classes"
+    },
+    "/ai_logs/{logId}": {
+      "schema": "AiUsageLog",
+      "description": "API usage logs"
+    },
+    "/teacherPhotos/{photoId}": {
+      "schema": "TeacherPhoto",
+      "description": "Teacher-assigned avatars for specific class contexts"
+    },
+    "/school_admin_invites/{inviteId}": {
+      "schema": "SchoolAdminInvite",
+      "description": "Invitations for new school administrators"
+    }
+  }
+}

@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Times New Roman", Times, "Liberation Serif", serif;
+}
+
+/* Custom scrollbar for a cleaner look */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.custom-sidebar-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-sidebar-scrollbar::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 10px;
+}
+.dark .custom-sidebar-scrollbar::-webkit-scrollbar-thumb {
+  background: #374151;
+}
+.custom-sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #d1d5db;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  @apply bg-stone-50 text-stone-900 transition-colors duration-300;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+.font-tnr {
+  font-family: "Times New Roman", Times, "Liberation Serif", serif;
+}
+
+@media print {
+  body {
+    background-color: white !important;
+  }
+  header, nav, .bg-stone-900, button, .gamification-bar {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}
