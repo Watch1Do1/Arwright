@@ -178,8 +178,8 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
           
           const applyStyle = () => {
             if (isTitle) {
-              doc.setFont(pdfFontName, 'bold');
-              doc.setFontSize(pdfFontSize * 1.2);
+              doc.setFont(pdfFontName, isMLA ? 'normal' : 'bold');
+              doc.setFontSize(isMLA ? pdfFontSize : pdfFontSize * 1.2);
             } else {
               doc.setFont(pdfFontName, 'normal');
               doc.setFontSize(pdfFontSize);
@@ -191,7 +191,7 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
 
           const splitWidth = isHanging ? (contentWidth - indentAmount) : contentWidth;
           const lines = doc.splitTextToSize(sanitizedText, splitWidth);
-          const currentLineHeight = (isTitle ? pdfFontSize * 1.2 : pdfFontSize) * pdfLineSpacing;
+          const currentLineHeight = (isTitle ? (isMLA ? pdfFontSize : pdfFontSize * 1.2) : pdfFontSize) * pdfLineSpacing;
           const pHeight = lines.length * currentLineHeight;
 
           // Page Break Logic (Atomic)
@@ -216,7 +216,7 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
               xPos = margin + indentAmount;
             }
             
-            const activeFontSize = isTitle ? pdfFontSize * 1.2 : pdfFontSize;
+            const activeFontSize = isTitle ? (isMLA ? pdfFontSize : pdfFontSize * 1.2) : pdfFontSize;
             doc.text(line, xPos, currentY + (activeFontSize * 0.85));
             currentY += currentLineHeight;
           });
@@ -406,8 +406,8 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
                           key={i} 
                           className="text-center mb-0"
                           style={{ 
-                            fontWeight: 'bold', 
-                            fontSize: isMLA ? '14.4pt' : `${fontSize * 1.2}pt`,
+                            fontWeight: isMLA ? 'normal' : 'bold', 
+                            fontSize: isMLA ? '12pt' : `${fontSize * 1.2}pt`,
                             marginTop: '24pt',
                             marginBottom: '24pt'
                           }}

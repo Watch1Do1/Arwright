@@ -66,8 +66,35 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
     setPageCount(pages);
   }, []);
 
+  const prevDocLength = useRef(docModel.paragraphs.length);
+  const prevIsMLA = useRef(isMLA);
+  const prevFontSize = useRef(fontSize);
+  const prevLineSpacing = useRef(lineSpacing);
+  const prevFontFamily = useRef(fontFamily);
+
   useLayoutEffect(() => {
-    runLayout();
+    // Optimizing layout calculations to prevent layout thrashing and jumping while typing
+    const lengthChanged = docModel.paragraphs.length !== prevDocLength.current;
+    const mlaChanged = isMLA !== prevIsMLA.current;
+    const fontChanged = fontSize !== prevFontSize.current || fontFamily !== prevFontFamily.current;
+    const spacingChanged = lineSpacing !== prevLineSpacing.current;
+
+    prevDocLength.current = docModel.paragraphs.length;
+    prevIsMLA.current = isMLA;
+    prevFontSize.current = fontSize;
+    prevLineSpacing.current = lineSpacing;
+    prevFontFamily.current = fontFamily;
+
+    if (lengthChanged || mlaChanged || fontChanged || spacingChanged) {
+      // Run immediately for structural configuration changes or splits/deletions 
+      runLayout();
+    } else {
+      // Debounce typing within blocks to ensure 100% smooth entry frames
+      const timer = setTimeout(() => {
+        runLayout();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
   }, [docModel, fontSize, lineSpacing, fontFamily, isMLA, mlaName, mlaInstructor, mlaCourse, mlaDate, runLayout]);
 
   const handlePageScroll = useCallback(() => {
@@ -154,6 +181,29 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
       const currentP = docModel.paragraphs[idx];
       const prevP = docModel.paragraphs[idx - 1];
       
+      if (prevP.kind === 'title' || prevP.kind === 'works-cited-title') {
+        // Structural boundary: Do NOT merge body into title. Just focus previous title block.
+        setTimeout(() => {
+          const prevEl = blockRefs.current[prevP.id];
+          if (prevEl) {
+            prevEl.focus();
+            const selection = window.getSelection();
+            const range = document.createRange();
+            const node = prevEl.childNodes[0] || prevEl;
+            const offset = prevEl.childNodes[0] ? prevP.text.length : 0;
+            try {
+              range.setStart(node, offset);
+              range.collapse(true);
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+            } catch (err) {
+              console.warn('Caret movement error:', err);
+            }
+          }
+        }, 0);
+        return;
+      }
+
       const newParagraphs = [...docModel.paragraphs];
       const prevTextLen = prevP.text.length;
       newParagraphs[idx - 1] = { ...prevP, text: prevP.text + currentP.text };
@@ -210,7 +260,10 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
     const range = selection.getRangeAt(0);
     const offset = range.startOffset;
 
-    if (e.key === 'Enter') {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      document.execCommand('insertText', false, '    ');
+    } else if (e.key === 'Enter') {
       e.preventDefault();
       splitParagraph(p.id, offset);
     } else if (e.key === 'Backspace' && offset === 0 && selection.isCollapsed) {
@@ -323,7 +376,7 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
         style={{ 
           width: PAGE_WIDTH,
           minHeight: PAGE_MIN_HEIGHT,
-          fontFamily: getFontStack(),
+          fontFamily: isMLA ? '"Times New Roman", Times, serif' : getFontStack(),
           color: textColor,
           backgroundColor: 'white',
           boxShadow: isDarkMode 
@@ -340,8 +393,8 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
         <div 
           className="relative z-20 flex flex-col flex-1"
           style={{ 
-            fontSize: `${fontSize}pt`,
-            lineHeight: lineSpacing,
+            fontSize: isMLA ? '12pt' : `${fontSize}pt`,
+            lineHeight: isMLA ? 2.0 : lineSpacing,
           }}
         >
           {/* MLA Header Area */}
@@ -427,7 +480,11 @@ const ParagraphBlock: React.FC<ParagraphBlockProps> = ({
       const normalizedPropText = paragraph.text;
       const normalizedDomText = innerRef.current.innerText.replace(/\n$/, '');
       if (normalizedDomText !== normalizedPropText) {
-        innerRef.current.innerText = paragraph.text;
+        // Only safely update innerText if the current element is not actively being edited.
+        // This solves the problem where trailing spaces/character typing causes caret reset and text jumping.
+        if (document.activeElement !== innerRef.current) {
+          innerRef.current.innerText = paragraph.text;
+        }
       }
     }
   }, [paragraph.text]);
@@ -445,19 +502,18 @@ const ParagraphBlock: React.FC<ParagraphBlockProps> = ({
       onPaste={onPaste}
       onFocus={onFocus}
       spellCheck="true"
-      className={`outline-none break-words cursor-text relative mb-4 ${
-        isTitle ? 'text-center font-bold text-[1.2em] mt-8 mb-8 empty:before:content-[attr(data-placeholder)] empty:before:text-stone-300 empty:before:pointer-events-none' : ''
+      className={`outline-none whitespace-pre-wrap break-words cursor-text relative mb-4 ${
+        isTitle 
+          ? (isMLA ? 'text-center text-[12pt] font-normal mb-6 mt-6' : 'text-center font-bold text-[1.2em] mt-8 mb-8') + ' empty:before:content-[attr(data-placeholder)] empty:before:text-stone-300 empty:before:pointer-events-none'
+          : 'text-left'
       } ${
         isWorksCited ? 'pl-[0.5in] -indent-[0.5in]' : ''
       } ${
-        isBody && isMLA ? 'text-indent-[0.5in]' : ''
+        isBody && isMLA ? 'before:content-[""] before:inline-block before:w-[0.5in] before:pointer-events-none before:select-none' : ''
       } ${
         isDarkMode ? 'caret-stone-900' : 'caret-indigo-500'
       }`}
       data-placeholder={isTitle ? "Title" : ""}
-      style={{
-        textIndent: (isBody && isMLA) ? '0.5in' : '0'
-      }}
     />
   );
 };

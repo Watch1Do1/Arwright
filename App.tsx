@@ -22,6 +22,37 @@ import SchoolAdminMode from './components/SchoolAdminMode';
 import AcceptInvite from './components/AcceptInvite';
 import { motion, AnimatePresence } from 'motion/react';
 
+const DEFAULT_DEMO_SUBMISSIONS: Submission[] = [
+  {
+    id: 'demo-sub-1',
+    studentId: 'demo-user-123',
+    studentName: 'Julian Thorne',
+    document: {
+      paragraphs: [
+        { id: 'p1', kind: 'title', text: 'The Paradox of Modern Efficiency' },
+        { id: 'p2', kind: 'body', text: 'Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency...' },
+        { id: 'p3', kind: 'body', text: 'Consider the digital workspace. Tools designed to save time often end up segmenting our attention, forcing us into roles where we react to automated cues rather than initiating original thoughts.' }
+      ]
+    },
+    timestamp: Date.now() - 7200000, // 2 hours ago
+    mode: WritingMode.ACADEMIC,
+    integrity: {
+      keystrokeCount: 280,
+      pasteEvents: 1,
+      pasteCharacters: 42,
+      averageWPM: 52,
+      flagged: false,
+      burstAlerts: 0
+    },
+    tutorSummary: "An excellent start on a challenging philosophical critique. The student displays highly creative structuring, though the second paragraph would benefit from tighter citation of active digital practices.",
+    thinkingTrace: [
+      { t: Date.now() - 7200000 - 900000, strokes: 0, len: 0, content: "" },
+      { t: Date.now() - 7200000 - 800000, strokes: 50, len: 50, content: "Modern efficiency" },
+      { t: Date.now() - 7200000 - 400000, strokes: 180, len: 210, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away..." }
+    ]
+  }
+];
+
 const App: React.FC = () => {
   const [role, setRole] = useState<UserRole>(UserRole.STUDENT);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -306,19 +337,28 @@ const App: React.FC = () => {
         };
         cohortId = 'demo-cohort-id';
       } else {
-        const cohortsRef = collection(db, 'cohorts');
-        const qCohort = query(cohortsRef, where('cohortCode', '==', codeToUse.toUpperCase().trim()));
-        const cohortSnap = await getDocs(qCohort);
+        try {
+          const cohortsRef = collection(db, 'cohorts');
+          const qCohort = query(cohortsRef, where('cohortCode', '==', codeToUse.toUpperCase().trim()));
+          const cohortSnap = await getDocs(qCohort);
 
-        if (cohortSnap.empty) {
-          setDemoError("Invalid cohort code. Demo access requires a valid institution code.");
-          setLoading(false);
-          return;
+          if (cohortSnap.empty) {
+            setDemoError("Invalid cohort code. Demo access requires a valid institution code.");
+            setLoading(false);
+            return;
+          }
+
+          const cohortDoc = cohortSnap.docs[0];
+          cohortData = cohortDoc.data();
+          cohortId = cohortDoc.id;
+        } catch (dbErr) {
+          console.warn("Firestore database not connected. Falling back into offline sandbox state:", dbErr);
+          cohortData = {
+            schoolId: 'demo-school-id',
+            graduationDate: Date.now() + 31536000000 // 1 year
+          };
+          cohortId = 'demo-cohort-id';
         }
-
-        const cohortDoc = cohortSnap.docs[0];
-        cohortData = cohortDoc.data();
-        cohortId = cohortDoc.id;
       }
 
       const demoUser = {
@@ -348,38 +388,42 @@ const App: React.FC = () => {
       setLoading(false);
 
       // Seed a submission for the demo user if it doesn't exist
-      const q = query(collection(db, 'submissions'), where('studentId', '==', 'demo-user-123'), limit(1));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        await addDoc(collection(db, 'submissions'), {
-          studentId: 'demo-user-123',
-          studentName: 'Julian Thorne',
-          document: {
-            paragraphs: [
-              { id: 'p1', kind: 'title', text: 'The Paradox of Modern Efficiency' },
-              { id: 'p2', kind: 'body', text: 'Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency...' }
+      try {
+        const q = query(collection(db, 'submissions'), where('studentId', '==', 'demo-user-123'), limit(1));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+          await addDoc(collection(db, 'submissions'), {
+            studentId: 'demo-user-123',
+            studentName: 'Julian Thorne',
+            document: {
+              paragraphs: [
+                { id: 'p1', kind: 'title', text: 'The Paradox of Modern Efficiency' },
+                { id: 'p2', kind: 'body', text: 'Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency...' }
+              ]
+            },
+            timestamp: Date.now() - 86400000,
+            mode: WritingMode.ACADEMIC,
+            integrity: {
+              keystrokeCount: 120,
+              pasteEvents: 1,
+              pasteCharacters: 50,
+              averageWPM: 45,
+              flagged: true,
+              burstAlerts: 2
+            },
+            tutorSummary: "Strong philosophical inquiry. The student engages deeply with the prompt, though the conclusion remains somewhat derivative.",
+            thinkingTrace: [
+              { t: Date.now() - 900000, strokes: 0, len: 0, content: "" },
+              { t: Date.now() - 850000, strokes: 15, len: 15, content: "Modern efficien" },
+              { t: Date.now() - 800000, strokes: 35, len: 35, content: "Modern efficiency is often heralded" },
+              { t: Date.now() - 750000, strokes: 50, len: 85, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, ", paste: 50 },
+              { t: Date.now() - 700000, strokes: 70, len: 110, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the ", ai: { query: "How to describe loss of agency?", focus: "Voice & Tone" } },
+              { t: Date.now() - 650000, strokes: 120, len: 180, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency..." }
             ]
-          },
-          timestamp: Date.now() - 86400000,
-          mode: WritingMode.ACADEMIC,
-          integrity: {
-            keystrokeCount: 120,
-            pasteEvents: 1,
-            pasteCharacters: 50,
-            averageWPM: 45,
-            flagged: true,
-            burstAlerts: 2
-          },
-          tutorSummary: "Strong philosophical inquiry. The student engages deeply with the prompt, though the conclusion remains somewhat derivative.",
-          thinkingTrace: [
-            { t: Date.now() - 900000, strokes: 0, len: 0, content: "" },
-            { t: Date.now() - 850000, strokes: 15, len: 15, content: "Modern efficien" },
-            { t: Date.now() - 800000, strokes: 35, len: 35, content: "Modern efficiency is often heralded" },
-            { t: Date.now() - 750000, strokes: 50, len: 85, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, ", paste: 50 },
-            { t: Date.now() - 700000, strokes: 70, len: 110, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the ", ai: { query: "How to describe loss of agency?", focus: "Voice & Tone" } },
-            { t: Date.now() - 650000, strokes: 120, len: 180, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency..." }
-          ]
-        });
+          });
+        }
+      } catch (seedErr) {
+        console.warn("Failed to seed submissions to database, running in offline sandbox state:", seedErr);
       }
     } catch (err) {
       console.error("Demo login error:", err);
@@ -442,6 +486,10 @@ const App: React.FC = () => {
       setSubmissions(data);
     }, (error) => {
       console.error("Firestore Listen Error:", error);
+      // Fallback to local offline submissions if in demo user context or when offline
+      if (activeUser.uid === 'demo-user-123') {
+        setSubmissions(DEFAULT_DEMO_SUBMISSIONS);
+      }
     });
 
     return () => unsubscribeSubmissions();
@@ -527,6 +575,21 @@ const App: React.FC = () => {
               <LogIn size={20} />
               <span>Continue with Institution</span>
             </button>
+
+            {authError && (
+              <div className="p-4 bg-rose-50/80 border border-rose-200/50 rounded-2xl text-left animate-in fade-in slide-in-from-top-1 duration-200">
+                <p className="text-[10px] text-rose-500 font-black uppercase tracking-widest mb-1">Authentication Sandbox Alert</p>
+                <p className="text-stone-600 text-xs leading-relaxed font-semibold">
+                  {authError.includes("api-key-not-valid") || authError.includes("invalid-api-key") ? (
+                    <span>
+                      Firebase has not been provisioned with standard API keys yet. Please use the <strong className="text-indigo-600 font-black uppercase">Demo / Guest Access</strong> box below to enter and experience the writing platform instantly, or click "Set up Firebase" in AI Studio!
+                    </span>
+                  ) : (
+                    authError
+                  )}
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center my-6">
               <div className="flex-1 h-px bg-stone-100"></div>
