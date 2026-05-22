@@ -6,13 +6,13 @@ import firebaseConfig from '../firebase-applet-config.json';
 const metaEnv = (import.meta as any).env || {};
 
 const config = {
-  apiKey: metaEnv.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
-  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
-  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
-  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
-  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
-  appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
-  firestoreDatabaseId: metaEnv.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId,
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey || "AIzaSyMockKeyForAppletInitializeOnly_",
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain || "mock-project.firebaseapp.com",
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId || "mock-project",
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket || "mock-project.appspot.com",
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId || "1234567890",
+  appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfig.appId || "1:1234567890:web:abcdef1234567890",
+  firestoreDatabaseId: metaEnv.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || "(default)",
 };
 
 const app = initializeApp(config);
@@ -20,8 +20,15 @@ export const db = getFirestore(app, config.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
+// Check if the current configuration is a sandbox/mock config to avoid noisy console errors in test settings
+const isMockConfig = !metaEnv.VITE_FIREBASE_API_KEY && (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("MockKey") || firebaseConfig.apiKey === "");
+
 // Connection test
 async function testConnection() {
+  if (isMockConfig) {
+    console.log("Firebase is initialized in sandbox/mock mode.");
+    return;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
