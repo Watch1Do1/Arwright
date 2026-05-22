@@ -20,6 +20,7 @@ interface WritingEditorProps {
   onInteraction?: () => void;
   onPaste?: (text: string) => void;
   isDeletingRef?: React.MutableRefObject<boolean>;
+  onKeystroke?: (isDelete: boolean) => void;
 }
 
 const PAGE_WIDTH = '8.5in';
@@ -46,6 +47,7 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
   onInteraction,
   onPaste,
   isDeletingRef,
+  onKeystroke,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -192,6 +194,16 @@ const WritingEditor: React.FC<WritingEditorProps> = ({
   };
 
   const handleBlockKeyDown = (e: React.KeyboardEvent, p: Paragraph) => {
+    const isDelete = e.key === 'Backspace' || e.key === 'Delete';
+    const isModifierOrNav = [
+      'Control', 'Shift', 'Alt', 'Meta', 'CapsLock', 'Escape', 'Tab',
+      'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'
+    ].includes(e.key);
+
+    if (!isModifierOrNav) {
+      onKeystroke?.(isDelete);
+    }
+
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
     

@@ -40,6 +40,14 @@ service cloud.firestore {
              data.status in ['PRE-ACTIVE', 'ACTIVE-STUDENT', 'DETACHED-STUDENT', 'ALUMNUS', 'ARCHIVED'];
     }
 
+    function isValidNudgeEvent(data) {
+      return data.keys().hasAll(['userId', 'eventType', 'nudgeId', 'timestamp']) &&
+             data.userId is string &&
+             data.eventType in ['nudge_triggered', 'nudge_outcome'] &&
+             data.nudgeId is string &&
+             data.timestamp is int;
+    }
+
     function isTeacher() {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'TEACHER';
     }
@@ -120,6 +128,16 @@ service cloud.firestore {
     match /ai_logs/{logId} {
       allow read: if isAdmin();
       allow create: if isSignedIn() || request.resource.data.userId == 'demo-user-123';
+    }
+
+    match /nudge_events/{eventId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid) || resource.data.userId == 'demo-user-123';
+      allow create: if isValidNudgeEvent(request.resource.data) && (
+        (isSignedIn() && request.resource.data.userId == request.auth.uid) ||
+        request.resource.data.userId == 'demo-user-123'
+      );
+      allow update: if false;
+      allow delete: if isAdmin();
     }
   }
 }

@@ -16,15 +16,23 @@ let adminAuth: admin.auth.Auth;
 
 try {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  let projectId = process.env.FIREBASE_PROJECT_ID;
+
   if (fs.existsSync(configPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    projectId = projectId || firebaseConfig.projectId;
+  }
+
+  if (projectId) {
     if (admin.apps.length === 0) {
       admin.initializeApp({
-        projectId: firebaseConfig.projectId,
+        projectId: projectId,
       });
     }
     adminDb = admin.firestore();
     adminAuth = admin.auth();
+  } else {
+    console.warn("No Firebase configuration found via firebase-applet-config.json or FIREBASE_PROJECT_ID env variable");
   }
 } catch (error) {
   console.error("Firebase Admin initialization error:", error);

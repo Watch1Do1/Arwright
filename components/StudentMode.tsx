@@ -8,7 +8,7 @@ import {
 } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../services/firebase';
-import { collection, query, where, getDocs, doc, updateDoc, increment, arrayUnion, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, increment, arrayUnion, onSnapshot, addDoc } from 'firebase/firestore';
 import WritingEditor from './WritingEditor';
 import PDFPreviewModal from './PDFPreviewModal';
 import { 
@@ -263,6 +263,15 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
 
   const isDeletingRef = useRef(false);
   const thinkingTraceRef = useRef<ThinkingEvent[]>([]);
+
+  // Real-time Writing Support Tracking Refs and State
+  const sessionStartTime = useRef(Date.now());
+  const lastInputTime = useRef(Date.now());
+  const deleteCount = useRef(0);
+  const nudgeAlreadyShown = useRef(false);
+  const originalWordCountRef = useRef(0);
+  const currentWordCountRef = useRef(0);
+  const [showNudge, setShowNudge] = useState(false);
 
   // Editor Styles State
   const [fontFamily, setFontFamily] = useState('tnr');
@@ -520,6 +529,94 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
   const words = fullText.trim() ? fullText.trim().split(/\s+/).filter(x => x) : [];
   const wordCount = words.length;
   const charCount = fullText.length;
+
+  // --- Real-time Writing Support / Nudge Processing ---
+  const ENABLE_REALTIME_NUDGE = true;
+
+  // Sync currentWordCountRef with actual wordCount
+  useEffect(() => {
+    currentWordCountRef.current = wordCount;
+  }, [wordCount]);
+
+  const shouldTriggerIntroNudge = () => {
+    if (!ENABLE_REALTIME_NUDGE) return false;
+    if (nudgeAlreadyShown.current) return false;
+
+    const wordCountCurrent = wordCount;
+    const sessionTimeSec = (Date.now() - sessionStartTime.current) / 1000;
+    const timeSinceLastInputSec = (Date.now() - lastInputTime.current) / 1000;
+    const currentDeleteCount = deleteCount.current;
+
+    return (
+      wordCountCurrent < 30 &&
+      sessionTimeSec > 60 &&
+      timeSinceLastInputSec > 45 &&
+      currentDeleteCount >= 1
+    );
+  };
+
+  const triggerNudge = async () => {
+    nudgeAlreadyShown.current = true;
+    setShowNudge(true);
+
+    const countAtTrigger = wordCount;
+    originalWordCountRef.current = countAtTrigger;
+    const sessionTimeSec = Math.round((Date.now() - sessionStartTime.current) / 1000);
+    const timeSinceLastInputSec = Math.round((Date.now() - lastInputTime.current) / 1000);
+    const triggerDeleteCount = deleteCount.current;
+    const eventTime = Date.now();
+
+    // Step 6: Log the "nudge_triggered" event
+    try {
+      await addDoc(collection(db, 'nudge_events'), {
+        userId: user?.uid || 'demo-user-123',
+        eventType: "nudge_triggered",
+        trigger: "intro_struggle",
+        nudgeId: "intro_main_idea_v1",
+        wordCount: countAtTrigger,
+        sessionTime: sessionTimeSec,
+        timeSinceLastInput: timeSinceLastInputSec,
+        deleteCount: triggerDeleteCount,
+        timestamp: eventTime
+      });
+    } catch (err) {
+      console.error("Error logging nudge triggered event:", err);
+    }
+
+    // Step 7: Wait 60 seconds, then log the outcome event
+    setTimeout(async () => {
+      const finalWordCount = currentWordCountRef.current;
+      const wordsAdded = finalWordCount - countAtTrigger;
+      const continued = wordsAdded > 10;
+
+      try {
+        await addDoc(collection(db, 'nudge_events'), {
+          userId: user?.uid || 'demo-user-123',
+          eventType: "nudge_outcome",
+          nudgeId: "intro_main_idea_v1",
+          wordsAddedAfter: wordsAdded,
+          continuedWriting: continued,
+          timestamp: Date.now()
+        });
+      } catch (err) {
+        console.error("Error logging nudge outcome event:", err);
+      }
+    }, 60000);
+  };
+
+  // Periodic checker to trigger nudge
+  useEffect(() => {
+    if (!ENABLE_REALTIME_NUDGE) return;
+
+    const interval = setInterval(() => {
+      if (shouldTriggerIntroNudge()) {
+        triggerNudge();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []); // Run in background across the typing session
+  // ----------------------------------------------------
   // Use pageCount from the editor instead of word-count based estimate
   const pageDisplayCount = isPageView ? activePageIndex + 1 : totalPages;
 
@@ -792,6 +889,36 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
       
       {/* WRITING EDITOR — Extracted logic */}
         <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden bg-stone-950/5 dark:bg-black/5">
+          <AnimatePresence>
+            {showNudge && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className={`mx-auto mt-4 max-w-xl w-full p-4 rounded-xl border flex items-start space-x-3 shadow-md z-30 transition-colors ${
+                  isDarkMode 
+                    ? 'bg-indigo-950/40 border-indigo-900/50 text-indigo-200' 
+                    : 'bg-indigo-50/80 border-indigo-100 text-indigo-900'
+                }`}
+              >
+                <div className="p-1 text-indigo-500 shrink-0">
+                  <Sparkles size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium leading-relaxed">
+                    Try writing one sentence that captures your main idea before expanding it.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowNudge(false)}
+                  className={`p-1 rounded-lg text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 transition-colors cursor-pointer`}
+                >
+                  <X size={14} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <WritingEditor 
             document={writingDoc}
             onChange={handleDocumentChange}
@@ -826,6 +953,12 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
               recordEvent({ paste: text.length });
             }}
             isDeletingRef={isDeletingRef}
+            onKeystroke={(isDelete) => {
+              lastInputTime.current = Date.now();
+              if (isDelete) {
+                deleteCount.current += 1;
+              }
+            }}
           />
         </div>
 

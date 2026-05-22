@@ -182,6 +182,25 @@
         "acceptedByUid": { "type": "string" }
       },
       "required": ["email", "schoolId", "token", "status", "createdAt", "expiresAt"]
+    },
+    "NudgeEvent": {
+      "title": "Nudge Event",
+      "description": "Logs when student nudges are triggered, and their outcomes",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "eventType": { "enum": ["nudge_triggered", "nudge_outcome"] },
+        "nudgeId": { "type": "string" },
+        "trigger": { "type": "string" },
+        "wordCount": { "type": "number" },
+        "sessionTime": { "type": "number" },
+        "timeSinceLastInput": { "type": "number" },
+        "deleteCount": { "type": "number" },
+        "wordsAddedAfter": { "type": "number" },
+        "continuedWriting": { "type": "boolean" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["userId", "eventType", "nudgeId", "timestamp"]
     }
   },
   "firestore": {
@@ -216,6 +235,10 @@
     "/school_admin_invites/{inviteId}": {
       "schema": "SchoolAdminInvite",
       "description": "Invitations for new school administrators"
+    },
+    "/nudge_events/{eventId}": {
+      "schema": "NudgeEvent",
+      "description": "Logs when student nudges are triggered, and their outcomes"
     }
   }
 }
