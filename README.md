@@ -157,10 +157,24 @@ Install dependencies:
 npm install
 ```
 
-Create a `.env` file:
-```env
-VITE_GEMINI_API_KEY=your_gemini_api_key_here
+Create a `.env` file by copying `.env.example` and filling it in:
+```bash
+cp .env.example .env
 ```
+
+The server needs:
+- `GEMINI_API_KEY`: your Gemini API key (server-side only; never exposed to the browser).
+- Firebase Admin credentials: either `GOOGLE_APPLICATION_CREDENTIALS` (path to a service
+  account key file, kept **outside** this folder) or `FIREBASE_SERVICE_ACCOUNT` (the key's
+  JSON on one line). The server uses them to verify sign-ins, assign roles (custom claims)
+  and check enrollment codes.
+- Optional: `ADMIN_EMAILS`, `FIREBASE_PROJECT_ID`, `FIREBASE_DATABASE_ID`,
+  `AI_RATE_LIMIT_PER_10_MIN`, `VITE_ENABLE_DEMO`. See `.env.example`.
+
+You also need `firebase-applet-config.json` (the Firebase web config, not committed).
+
+After changing `firestore.rules`, publish them in the Firebase console
+(Firestore Database → Rules → paste → Publish). They are not deployed automatically.
 
 Run development server:
 ```bash
@@ -182,7 +196,9 @@ npm run dev
 
 ## 🔐 Security & Compliance
 
-- Role-based access control across all users
+- Role-based access control across all users; roles are assigned only by the server
+  (Firebase Auth custom claims), never by the browser
+- All server API routes require a verified Firebase sign-in and are rate limited
 - Firestore security rules enforce data isolation
 - API keys are never committed
 - Designed for FERPA-aligned usage

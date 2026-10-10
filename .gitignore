@@ -25,5 +25,9 @@ dist-ssr
 
 # Environment files
 .env
-.env.example
+!.env.example
 firebase-applet-config.json
+
+# Firebase service account keys (never commit these)
+*firebase-adminsdk*.json
+service-account*.json
