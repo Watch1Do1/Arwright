@@ -16,7 +16,7 @@ service cloud.firestore {
     }
 
     function isOwner(uid) {
-      return (isSignedIn() && request.auth.uid == uid) || uid == 'demo-user-123' || (request.auth == null && uid == 'demo-user-123');
+      return isSignedIn() && request.auth.uid == uid;
     }
 
     function isValidId(id) {
@@ -86,7 +86,7 @@ service cloud.firestore {
     }
 
     match /classes/{classId} {
-      allow read: if true;
+      allow read: if isSignedIn();
       allow create: if (isTeacher() || isAdmin()) && isValidClass(request.resource.data);
       allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid) || 
                        (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['studentCount']));
@@ -94,8 +94,12 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId || isAdmin() || isTeacher() ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SCHOOL_ADMIN'
+      );
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data) &&
+                       request.resource.data.role == 'STUDENT' && request.resource.data.status == 'PRE-ACTIVE';
       allow update: if isAdmin() || 
                     (isSignedIn() && request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'email'])) ||
                     (isSchoolAdmin(resource.data.schoolId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disabled', 'schoolId'])) ||
@@ -104,7 +108,7 @@ service cloud.firestore {
     }
 
     match /schools/{schoolId} {
-      allow read: if true;
+      allow read: if isSignedIn();
       allow write: if isAdmin();
     }
 
@@ -127,15 +131,13 @@ service cloud.firestore {
 
     match /ai_logs/{logId} {
       allow read: if isAdmin();
-      allow create: if isSignedIn() || request.resource.data.userId == 'demo-user-123';
+      allow create: if isSignedIn();
     }
 
     match /nudge_events/{eventId} {
-      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid) || resource.data.userId == 'demo-user-123';
-      allow create: if isValidNudgeEvent(request.resource.data) && (
-        (isSignedIn() && request.resource.data.userId == request.auth.uid) ||
-        request.resource.data.userId == 'demo-user-123'
-      );
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidNudgeEvent(request.resource.data) &&
+                       isSignedIn() && request.resource.data.userId == request.auth.uid;
       allow update: if false;
       allow delete: if isAdmin();
     }
