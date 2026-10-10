@@ -49,6 +49,9 @@ const AcceptInvite: React.FC<AcceptInviteProps> = ({ token }) => {
         throw new Error(result.error || 'Failed to accept invite');
       }
 
+      // Refresh the token so it carries the new School Admin role
+      await auth.currentUser?.getIdToken(true);
+
       setStatus('SUCCESS');
       setSchoolId(result.schoolId);
     } catch (err: any) {

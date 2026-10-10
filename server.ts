@@ -107,7 +107,24 @@ setInterval(() => {
 const AI_RATE_LIMIT = parseInt(process.env.AI_RATE_LIMIT_PER_10_MIN || "30", 10) || 30;
 const aiRateLimit = rateLimit("ai", AI_RATE_LIMIT, 10 * 60 * 1000);
 
-// Middleware to verify Admin
+// Platform admins. Override with the ADMIN_EMAILS environment variable (comma-separated).
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "team@watch1do1.com,hello@arwrightlearning.com")
+  .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+const VALID_ROLES = ["STUDENT", "TEACHER", "SCHOOL_ADMIN", "ADMIN"];
+
+// The ONLY place roles are assigned: Firebase Auth custom claims { role, schoolId },
+// mirrored onto users/{uid} so the app and the current Firestore rules can read them.
+async function setRole(uid: string, role: string, schoolId?: string | null) {
+  if (!VALID_ROLES.includes(role)) {
+    throw new Error(`Invalid role: ${role}`);
+  }
+  const finalSchoolId = schoolId ?? null;
+  await adminAuth.setCustomUserClaims(uid, { role, schoolId: finalSchoolId });
+  await adminDb.collection("users").doc(uid).set({ role, schoolId: finalSchoolId }, { merge: true });
+}
+
+// Middleware to verify Admin (uses the server-set "role" custom claim)
 const authenticateAdmin = async (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
   if (!adminAuth || !adminDb) {
@@ -119,8 +136,7 @@ const authenticateAdmin = async (req: any, res: any, next: any) => {
   const token = authHeader.split(" ")[1];
   try {
     const decodedToken = await adminAuth.verifyIdToken(token);
-    const userDoc = await adminDb.collection("users").doc(decodedToken.uid).get();
-    if (userDoc.exists && userDoc.data()?.role === "ADMIN") {
+    if (decodedToken.role === "ADMIN") {
       req.user = decodedToken;
       next();
     } else {
@@ -194,6 +210,11 @@ app.post("/api/auth/accept-invite", async (req, res) => {
       return res.status(410).json({ error: "Invite has expired" });
     }
 
+    const userRef = adminDb.collection("users").doc(uid);
+    if (!(await userRef.get()).exists) {
+      return res.status(409).json({ error: "Your account is still being set up. Please wait a moment and try again." });
+    }
+
     await adminDb.runTransaction(async (transaction) => {
       transaction.update(inviteDoc.ref, {
         status: "accepted",
@@ -207,10 +228,90 @@ app.post("/api/auth/accept-invite", async (req, res) => {
       });
     });
 
+    await setRole(uid, "SCHOOL_ADMIN", inviteData.schoolId);
+
     res.json({ success: true, schoolId: inviteData.schoolId });
   } catch (error: any) {
     console.error("Accept invite error:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Called by the app right after every sign-in. Creates the user's profile if needed and makes
+// sure their role claim is set by the server (never by the browser).
+app.post("/api/auth/sync-role", requireAuth, async (req: any, res) => {
+  try {
+    const uid: string = req.user.uid;
+    const email: string = req.user.email || "";
+    const isListedAdmin = req.user.email_verified === true && ADMIN_EMAILS.includes(email.toLowerCase());
+    const userRef = adminDb.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      await userRef.set({
+        uid,
+        email,
+        displayName: req.user.name || "Anonymous Student",
+        photoURL: req.user.picture || "",
+        role: "STUDENT",
+        status: isListedAdmin ? "ACTIVE-STUDENT" : "PRE-ACTIVE",
+        createdAt: Date.now(),
+      });
+    }
+    const existing: any = userSnap.exists ? userSnap.data() : {};
+
+    let role: string | undefined = req.user.role;
+    let schoolId: string | null = req.user.schoolId ?? null;
+
+    if (isListedAdmin) {
+      if (role !== "ADMIN") {
+        await setRole(uid, "ADMIN", null);
+        role = "ADMIN";
+        schoolId = null;
+      }
+      if (existing.status === "PRE-ACTIVE") {
+        await userRef.update({ status: "ACTIVE-STUDENT" });
+      }
+    } else if (!role) {
+      // First sign-in since roles moved to the server: carry over the stored role,
+      // but never grant ADMIN to an address that is not in ADMIN_EMAILS.
+      let storedRole = userSnap.exists ? existing.role : "STUDENT";
+      if (!VALID_ROLES.includes(storedRole) || storedRole === "ADMIN") storedRole = "STUDENT";
+      role = storedRole;
+      schoolId = userSnap.exists ? (existing.schoolId ?? null) : null;
+      await setRole(uid, storedRole, schoolId);
+    }
+
+    res.json({ role, schoolId });
+  } catch (error: any) {
+    console.error("sync-role error:", error?.message);
+    res.status(500).json({ error: "Could not verify your account." });
+  }
+});
+
+// Platform admins change a user's role here (the browser can no longer write roles).
+app.post("/api/admin/set-role", requireAuth, async (req: any, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden: Admin access required" });
+  }
+  const { uid, role, schoolId } = req.body || {};
+  if (typeof uid !== "string" || !uid || uid.includes("/") || !VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: "A valid uid and role are required" });
+  }
+  if (uid === req.user.uid && role !== "ADMIN") {
+    return res.status(400).json({ error: "You cannot remove your own Admin role." });
+  }
+  try {
+    const targetSnap = await adminDb.collection("users").doc(uid).get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const finalSchoolId = schoolId === undefined ? (targetSnap.data()?.schoolId ?? null) : schoolId;
+    await setRole(uid, role, finalSchoolId);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("set-role error:", error?.message);
+    res.status(500).json({ error: "Could not update the role." });
   }
 });
 
@@ -419,11 +520,7 @@ app.post("/api/integrity-review", requireAuth, aiRateLimit, async (req: any, res
       const classSnap = await adminDb.collection("classes").doc(submission.classId).get();
       isClassTeacher = classSnap.exists && classSnap.data()?.teacherId === req.user.uid;
     }
-    let isPlatformAdmin = false;
-    if (!isClassTeacher) {
-      const callerSnap = await adminDb.collection("users").doc(req.user.uid).get();
-      isPlatformAdmin = callerSnap.exists && callerSnap.data()?.role === "ADMIN";
-    }
+    const isPlatformAdmin = req.user.role === "ADMIN";
     if (!isClassTeacher && !isPlatformAdmin) {
       return res.status(403).json({ error: "Forbidden" });
     }

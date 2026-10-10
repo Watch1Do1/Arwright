@@ -15,7 +15,7 @@ import { UserRole, UserStatus, Submission, IntegrityReport, WritingMode, Thinkin
 import { summarizeSubmissionForTeacher, estimateWritingProficiency } from './services/geminiService';
 import { auth, db, signInWithGoogle } from './services/firebase';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { collection, onSnapshot, query, orderBy, addDoc, getDoc, setDoc, doc, getDocs, updateDoc, where, limit, arrayUnion } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, addDoc, getDoc, doc, getDocs, updateDoc, where, limit, arrayUnion } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon, ShieldAlert, GraduationCap, Briefcase, Link as LinkIcon } from 'lucide-react';
 import AdminMode from './components/AdminMode';
 import SchoolAdminMode from './components/SchoolAdminMode';
@@ -243,21 +243,31 @@ const App: React.FC = () => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
+        // Roles are assigned only by the server. Ask it to create/verify this account first.
+        try {
+          const syncResponse = await fetch('/api/auth/sync-role', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${await u.getIdToken()}` }
+          });
+          if (!syncResponse.ok) throw new Error(`sync-role failed: ${syncResponse.status}`);
+          // Refresh the token so it carries the role set by the server
+          await u.getIdToken(true);
+        } catch (syncErr) {
+          console.error("Account verification failed:", syncErr);
+          setAuthError("Could not verify your account. Please try again.");
+          setUser(null);
+          setUserProfile(null);
+          await signOut(auth);
+          setLoading(false);
+          return;
+        }
+
         try {
           const userRef = doc(db, 'users', u.uid);
           const userSnap = await getDoc(userRef);
-          const adminEmails = ['team@watch1do1.com', 'hello@arwrightlearning.com'];
-          const isAdminEmail = adminEmails.includes(u.email || '');
 
           if (userSnap.exists()) {
             let profile = userSnap.data() as UserProfile;
-            
-            // Ensure listed admins always have the ADMIN role
-            if (isAdminEmail && profile.role !== UserRole.ADMIN) {
-              await updateDoc(userRef, { role: UserRole.ADMIN, status: UserStatus.ACTIVE_STUDENT });
-              profile.role = UserRole.ADMIN;
-              profile.status = UserStatus.ACTIVE_STUDENT;
-            }
 
             // Check for graduation logic (The only automatic ALUMNUS trigger)
             const isStudentSession = profile.status === UserStatus.ACTIVE_STUDENT || profile.status === UserStatus.DETACHED_STUDENT;
@@ -283,23 +293,8 @@ const App: React.FC = () => {
               setShowOnboarding(true);
             }
           } else {
-            // "Arwright Login, Identity, and Access Model"
-            // No public self-signup into active states.
-            const newProfile: UserProfile = {
-              uid: u.uid,
-              email: u.email || '',
-              displayName: u.displayName || 'Anonymous Student',
-              photoURL: u.photoURL || '',
-              role: isAdminEmail ? UserRole.ADMIN : UserRole.STUDENT,
-              status: isAdminEmail ? UserStatus.ACTIVE_STUDENT : UserStatus.PRE_ACTIVE,
-              createdAt: Date.now()
-            };
-            await setDoc(userRef, newProfile);
-            setUserProfile(newProfile);
-            setRole(newProfile.role);
-            if (newProfile.status === UserStatus.PRE_ACTIVE) {
-              setShowOnboarding(true);
-            }
+            // The server creates the profile in /api/auth/sync-role; it should always exist here.
+            throw new Error("User profile was not created");
           }
         } catch (err) {
           console.error("Error loading user profile:", err);

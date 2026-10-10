@@ -93,9 +93,23 @@ const AdminMode: React.FC = () => {
 
   const handleUpdateRole = async (userId: string, newRole: UserRole) => {
     try {
-      await updateDoc(doc(db, 'users', userId), { role: newRole });
+      // Roles can only be changed by the server
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch('/api/admin/set-role', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ uid: userId, role: newRole })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        alert(data.error || "Failed to update role");
+      }
     } catch (err) {
       console.error("Error updating role:", err);
+      alert("Failed to update role");
     }
   };
 
