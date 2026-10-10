@@ -12,7 +12,7 @@ import Layout from './components/Layout';
 import StudentMode from './components/StudentMode';
 import TeacherMode from './components/TeacherMode';
 import { UserRole, UserStatus, Submission, IntegrityReport, WritingMode, ThinkingEvent, UserProfile, WritingDocument, Cohort, Classroom } from './types';
-import { summarizeSubmissionForTeacher, estimateWritingProficiency } from './services/geminiService';
+import { summarizeSubmissionForTeacher, estimateWritingProficiency, authedFetch } from './services/geminiService';
 import { auth, db, signInWithGoogle } from './services/firebase';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
 import { collection, onSnapshot, query, orderBy, addDoc, getDoc, doc, getDocs, updateDoc, where, limit, arrayUnion } from 'firebase/firestore';
@@ -76,6 +76,7 @@ const App: React.FC = () => {
     cohortId: string;
     graduationDate: number;
     role: UserRole;
+    code: string;
   } | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -119,44 +120,41 @@ const App: React.FC = () => {
     setOnboardingError("");
     
     try {
-      // 1. Check if it's a School Code (Teacher/Admin Entrance)
-      const schoolsRef = collection(db, 'schools');
-      const qSchool = query(schoolsRef, where('schoolCode', '==', enrollmentCode.toUpperCase()));
-      const schoolSnap = await getDocs(qSchool);
+      // Codes are checked (and school codes applied) by the server
+      const code = enrollmentCode.trim().toUpperCase();
+      const response = await authedFetch('/api/onboarding/redeem-code', { code });
+      const result = await response.json().catch(() => ({}));
 
-      if (!schoolSnap.empty) {
-        const schoolDoc = schoolSnap.docs[0];
-        
-        await updateDoc(doc(db, 'users', user.uid), { 
-          schoolId: schoolDoc.id,
-          role: UserRole.TEACHER,
-          status: UserStatus.ACTIVE_STUDENT
-        });
+      if (!response.ok) {
+        setOnboardingError(result.error || "An error occurred. Please try again.");
+        return;
+      }
+
+      // 1. School Code (Teacher/Admin Entrance)
+      if (result.type === 'school') {
+        await user.getIdToken(true);
         const updatedSnap = await getDoc(doc(db, 'users', user.uid));
-        setUserProfile(updatedSnap.data() as UserProfile);
-        setRole(UserRole.TEACHER);
+        const updatedProfile = updatedSnap.data() as UserProfile;
+        setUserProfile(updatedProfile);
+        setRole(updatedProfile.role);
         setShowOnboarding(false);
         return;
       }
 
-      // 2. Check if it's a Cohort Code (Student Entrance)
-      const cohortsRef = collection(db, 'cohorts');
-      const qCohort = query(cohortsRef, where('cohortCode', '==', enrollmentCode.toUpperCase()));
-      const cohortSnap = await getDocs(qCohort);
-
-      if (!cohortSnap.empty) {
-        const cohortDoc = cohortSnap.docs[0];
-        const cohortData = cohortDoc.data();
-        
+      // 2. Cohort Code (Student Entrance)
+      if (result.type === 'cohort') {
         setTempProfile({
           firstName: '',
           lastName: '',
-          schoolId: cohortData.schoolId,
-          cohortId: cohortDoc.id,
-          graduationDate: cohortData.graduationDate,
-          role: UserRole.STUDENT
+          schoolId: result.schoolId,
+          cohortId: result.cohortId,
+          graduationDate: result.graduationDate,
+          role: UserRole.STUDENT,
+          code
         });
         setOnboardingStep('NAME');
+        // Detached students reconnecting also go through the name step
+        setShowOnboarding(true);
         return;
       }
 
@@ -171,24 +169,26 @@ const App: React.FC = () => {
     if (!user || !tempProfile) return;
     
     try {
-      const displayName = `${firstName} ${lastName}`.trim();
+      setOnboardingError("");
       const userRef = doc(db, 'users', user.uid);
-      
-      await updateDoc(userRef, {
-        firstName,
-        lastName,
-        displayName,
-        schoolId: tempProfile.schoolId,
-        cohortId: tempProfile.cohortId,
-        graduationDate: tempProfile.graduationDate,
-        role: tempProfile.role,
-        status: UserStatus.ACTIVE_STUDENT,
-        nameHistory: arrayUnion({ name: displayName, changedAt: Date.now() })
+
+      // The server re-checks the cohort code and saves the profile
+      const response = await authedFetch('/api/onboarding/complete-student', {
+        code: tempProfile.code,
+        firstName: firstName.trim(),
+        lastName: lastName.trim()
       });
-      
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        setOnboardingError(result.error || "Failed to save profile. Please try again.");
+        return;
+      }
+
+      await user.getIdToken(true);
       const updatedSnap = await getDoc(userRef);
-      setUserProfile(updatedSnap.data() as UserProfile);
-      setRole(tempProfile.role);
+      const updatedProfile = updatedSnap.data() as UserProfile;
+      setUserProfile(updatedProfile);
+      setRole(updatedProfile.role);
       setOnboardingStep('CLASS');
     } catch (err) {
       console.error("Name entry error:", err);
@@ -670,7 +670,7 @@ const App: React.FC = () => {
     >
       {/* Onboarding / Detached Reconnection Modal (Faculty and Detached Students) */}
       <AnimatePresence>
-        {((showOnboarding && userProfile?.role !== UserRole.STUDENT) || (userProfile?.status === UserStatus.DETACHED_STUDENT)) && (
+        {((showOnboarding && userProfile?.role !== UserRole.STUDENT) || (userProfile?.status === UserStatus.DETACHED_STUDENT)) && onboardingStep !== 'NAME' && onboardingStep !== 'CLASS' && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-md">
             <motion.div 
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -718,7 +718,7 @@ const App: React.FC = () => {
         )}
 
         {/* Multi-Step Student Onboarding */}
-        {showOnboarding && userProfile?.status === UserStatus.PRE_ACTIVE && (
+        {showOnboarding && (userProfile?.status === UserStatus.PRE_ACTIVE || onboardingStep === 'NAME' || onboardingStep === 'CLASS') && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-md">
             <motion.div 
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -792,6 +792,7 @@ const App: React.FC = () => {
                         />
                       </div>
                     </div>
+                    {onboardingError && <p className="text-rose-500 text-[10px] font-black uppercase tracking-widest text-center">{onboardingError}</p>}
                     <button 
                       disabled={!tempProfile?.firstName || !tempProfile?.lastName}
                       onClick={() => handleCompleteNameEntry(tempProfile!.firstName, tempProfile!.lastName)}

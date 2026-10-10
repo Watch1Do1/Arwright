@@ -4,7 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 // Load a local .env file when running on your own computer (does not override variables
 // that are already set, e.g. by AI Studio or Cloud Run).
@@ -312,6 +312,110 @@ app.post("/api/admin/set-role", requireAuth, async (req: any, res) => {
   } catch (error: any) {
     console.error("set-role error:", error?.message);
     res.status(500).json({ error: "Could not update the role." });
+  }
+});
+
+// ---- Onboarding: school and cohort codes are checked and applied on the server ----
+const codeRateLimit = rateLimit("code", 10, 10 * 60 * 1000);
+const STAFF_ROLES = ["TEACHER", "SCHOOL_ADMIN", "ADMIN"];
+const normaliseCode = (code: unknown) => String(code ?? "").trim().toUpperCase().slice(0, 64);
+const INVALID_CODE_MESSAGE = "Invalid enrollment code. Please check with your school.";
+
+app.post("/api/onboarding/redeem-code", requireAuth, codeRateLimit, async (req: any, res) => {
+  const code = normaliseCode(req.body?.code);
+  if (!code) {
+    return res.status(404).json({ error: INVALID_CODE_MESSAGE });
+  }
+  try {
+    const uid: string = req.user.uid;
+    const callerRole: string | undefined = req.user.role;
+
+    // a) School code: faculty entrance
+    const schoolSnap = await adminDb.collection("schools").where("schoolCode", "==", code).limit(1).get();
+    if (!schoolSnap.empty) {
+      const schoolDoc = schoolSnap.docs[0];
+      const schoolName = schoolDoc.data().name || "";
+      if (callerRole === "ADMIN" || callerRole === "SCHOOL_ADMIN") {
+        return res.json({ type: "school", schoolId: schoolDoc.id, schoolName, role: callerRole });
+      }
+      // Only new, detached or existing teacher accounts can join as faculty.
+      const userSnap = await adminDb.collection("users").doc(uid).get();
+      const status = userSnap.data()?.status;
+      if (callerRole !== "TEACHER" && status !== "PRE-ACTIVE" && status !== "DETACHED-STUDENT") {
+        return res.status(403).json({ error: "This account is already enrolled. Please contact your school." });
+      }
+      await setRole(uid, "TEACHER", schoolDoc.id);
+      await adminDb.collection("users").doc(uid).update({ status: "ACTIVE-STUDENT" });
+      return res.json({ type: "school", schoolId: schoolDoc.id, schoolName, role: "TEACHER" });
+    }
+
+    // b) Cohort code: student entrance (nothing is written until the name step)
+    const cohortSnap = await adminDb.collection("cohorts").where("cohortCode", "==", code).limit(1).get();
+    if (!cohortSnap.empty) {
+      if (callerRole && STAFF_ROLES.includes(callerRole)) {
+        return res.status(403).json({ error: "Staff accounts cannot join a student cohort." });
+      }
+      const cohortDoc = cohortSnap.docs[0];
+      const cohort = cohortDoc.data();
+      return res.json({
+        type: "cohort",
+        cohortId: cohortDoc.id,
+        schoolId: cohort.schoolId,
+        graduationDate: cohort.graduationDate,
+        cohortName: cohort.name || "",
+      });
+    }
+
+    return res.status(404).json({ error: INVALID_CODE_MESSAGE });
+  } catch (error: any) {
+    console.error("redeem-code error:", error?.message);
+    res.status(500).json({ error: "An error occurred. Please try again." });
+  }
+});
+
+app.post("/api/onboarding/complete-student", requireAuth, codeRateLimit, async (req: any, res) => {
+  const callerRole: string | undefined = req.user.role;
+  if (callerRole && STAFF_ROLES.includes(callerRole)) {
+    return res.status(403).json({ error: "Staff accounts cannot join a student cohort." });
+  }
+  const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+  const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+  if (!firstName || !lastName || firstName.length > 60 || lastName.length > 60) {
+    return res.status(400).json({ error: "Please enter a first and last name (up to 60 characters each)." });
+  }
+  const code = normaliseCode(req.body?.code);
+  try {
+    // Look the cohort up again here; never trust ids sent by the browser.
+    const cohortSnap = code
+      ? await adminDb.collection("cohorts").where("cohortCode", "==", code).limit(1).get()
+      : null;
+    if (!cohortSnap || cohortSnap.empty) {
+      return res.status(404).json({ error: INVALID_CODE_MESSAGE });
+    }
+    const uid: string = req.user.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists || userSnap.data()?.status === "ARCHIVED") {
+      return res.status(403).json({ error: "This account cannot be enrolled. Please contact your school." });
+    }
+    const cohortDoc = cohortSnap.docs[0];
+    const cohort = cohortDoc.data();
+    const displayName = `${firstName} ${lastName}`;
+    await userRef.update({
+      firstName,
+      lastName,
+      displayName,
+      schoolId: cohort.schoolId ?? null,
+      cohortId: cohortDoc.id,
+      graduationDate: cohort.graduationDate ?? null,
+      status: "ACTIVE-STUDENT",
+      nameHistory: FieldValue.arrayUnion({ name: displayName, changedAt: Date.now() }),
+    });
+    await setRole(uid, "STUDENT", cohort.schoolId ?? null);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("complete-student error:", error?.message);
+    res.status(500).json({ error: "Failed to save profile. Please try again." });
   }
 });
 
