@@ -4,11 +4,19 @@ import { GoogleGenAI } from "@google/genai";
 import admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
+import { getFirestore } from "firebase-admin/firestore";
+
+// Load a local .env file when running on your own computer (does not override variables
+// that are already set, e.g. by AI Studio or Cloud Run).
+const envPath = path.join(process.cwd(), ".env");
+if (fs.existsSync(envPath) && typeof (process as any).loadEnvFile === "function") {
+  (process as any).loadEnvFile(envPath);
+}
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 // Initialize Firebase Admin
 let adminDb: admin.firestore.Firestore;
@@ -17,19 +25,35 @@ let adminAuth: admin.auth.Auth;
 try {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   let projectId = process.env.FIREBASE_PROJECT_ID;
+  let databaseId = process.env.FIREBASE_DATABASE_ID;
 
   if (fs.existsSync(configPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
     projectId = projectId || firebaseConfig.projectId;
+    databaseId = databaseId || firebaseConfig.firestoreDatabaseId;
+  }
+
+  // Credentials: FIREBASE_SERVICE_ACCOUNT (the service account JSON on one line) if set;
+  // otherwise Google Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS = path
+  // to the key file on your computer, or the built-in service account on Cloud Run).
+  let credential: admin.credential.Credential | undefined;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    credential = admin.credential.cert(serviceAccount);
+    projectId = projectId || serviceAccount.project_id;
   }
 
   if (projectId) {
     if (admin.apps.length === 0) {
       admin.initializeApp({
         projectId: projectId,
+        ...(credential ? { credential } : {}),
       });
     }
-    adminDb = admin.firestore();
+    // Use the same Firestore database as the browser app (it may be a named database).
+    adminDb = databaseId && databaseId !== "(default)"
+      ? getFirestore(admin.app(), databaseId)
+      : getFirestore(admin.app());
     adminAuth = admin.auth();
   } else {
     console.warn("No Firebase configuration found via firebase-applet-config.json or FIREBASE_PROJECT_ID env variable");
@@ -38,9 +62,57 @@ try {
   console.error("Firebase Admin initialization error:", error);
 }
 
+// Verifies "Authorization: Bearer <Firebase ID token>" and puts the decoded token on req.user.
+const requireAuth = async (req: any, res: any, next: any) => {
+  if (!adminAuth) {
+    return res.status(503).json({ error: "Server is not configured for sign-in checks." });
+  }
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    req.user = await adminAuth.verifyIdToken(authHeader.slice("Bearer ".length).trim());
+    next();
+  } catch {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+};
+
+// Simple in-memory rate limiter (per signed-in user). Use after requireAuth.
+// Counts reset when the server restarts and are kept per server instance.
+const rateBuckets = new Map<string, number[]>();
+function rateLimit(name: string, maxRequests: number, windowMs: number) {
+  return (req: any, res: any, next: any) => {
+    const key = `${name}:${req.user?.uid || req.ip}`;
+    const now = Date.now();
+    const recent = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+    if (recent.length >= maxRequests) {
+      rateBuckets.set(key, recent);
+      return res.status(429).json({ error: "Too many requests. Please wait a few minutes and try again." });
+    }
+    recent.push(now);
+    rateBuckets.set(key, recent);
+    next();
+  };
+}
+// Periodically forget old entries so memory does not grow.
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [key, times] of rateBuckets) {
+    if (!times.some((t) => t > cutoff)) rateBuckets.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
+
+const AI_RATE_LIMIT = parseInt(process.env.AI_RATE_LIMIT_PER_10_MIN || "30", 10) || 30;
+const aiRateLimit = rateLimit("ai", AI_RATE_LIMIT, 10 * 60 * 1000);
+
 // Middleware to verify Admin
 const authenticateAdmin = async (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
+  if (!adminAuth || !adminDb) {
+    return res.status(503).json({ error: "Server is not configured for sign-in checks." });
+  }
   if (!authHeader?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -162,8 +234,8 @@ function getAi() {
   return aiClient;
 }
 
-app.post("/api/gemini/feedback", async (req, res) => {
-  const { content, context, userQuestion, mode, personality, userId } = req.body;
+app.post("/api/gemini/feedback", requireAuth, aiRateLimit, async (req, res) => {
+  const { content, context, userQuestion, mode, personality } = req.body;
   try {
     const ai = getAi();
     const isDraftEmpty = !content || content.trim().length < 5;
@@ -229,13 +301,13 @@ app.post("/api/gemini/feedback", async (req, res) => {
 
     res.json(JSON.parse(response.text));
   } catch (error: any) {
-    console.error("Feedback error:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Feedback error:", error?.message);
+    res.status(500).json({ error: "AI request failed" });
   }
 });
 
-app.post("/api/gemini/quiz", async (req, res) => {
-  const { content, focusArea, userId } = req.body;
+app.post("/api/gemini/quiz", requireAuth, aiRateLimit, async (req, res) => {
+  const { content, focusArea } = req.body;
   try {
     const ai = getAi();
     const prompt = `Based on the following student writing snippet and the focus area "${focusArea}", create a 3-question multiple choice quiz to test the student's knowledge of the underlying principles. 
@@ -256,7 +328,7 @@ app.post("/api/gemini/quiz", async (req, res) => {
       ]
     }
     
-    Snippet: ${content.substring(0, 1000)}`;
+    Snippet: ${String(content || "").substring(0, 1000)}`;
 
     const response = await ai.models.generateContent({ 
       model: 'gemini-3-flash-preview',
@@ -268,12 +340,13 @@ app.post("/api/gemini/quiz", async (req, res) => {
 
     res.json(JSON.parse(response.text));
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error("AI route error:", error?.message);
+    res.status(500).json({ error: "AI request failed" });
   }
 });
 
-app.post("/api/gemini/summary", async (req, res) => {
-  const { submission, mode, userId } = req.body;
+app.post("/api/gemini/summary", requireAuth, aiRateLimit, async (req, res) => {
+  const { submission, mode } = req.body;
   try {
     const ai = getAi();
     const prompt = `Writing Mode: ${mode}\n\nPerform an objective evaluation of this submission within its specific mode. Focus on how well the student met the requirements of this genre (2 sentences).\n\nSubmission: ${submission}`;
@@ -287,12 +360,13 @@ app.post("/api/gemini/summary", async (req, res) => {
 
     res.json({ text: response.text });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error("AI route error:", error?.message);
+    res.status(500).json({ error: "AI request failed" });
   }
 });
 
-app.post("/api/gemini/proficiency", async (req, res) => {
-  const { submission, mode, userId } = req.body;
+app.post("/api/gemini/proficiency", requireAuth, aiRateLimit, async (req, res) => {
+  const { submission, mode } = req.body;
   try {
     const ai = getAi();
     const prompt = `Writing Mode: ${mode}\n\nAnalyze this submission to synthesize a professional writing proficiency profile. 
@@ -316,24 +390,64 @@ app.post("/api/gemini/proficiency", async (req, res) => {
 
     res.json(JSON.parse(response.text));
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error("AI route error:", error?.message);
+    res.status(500).json({ error: "AI request failed" });
   }
 });
 
-app.post("/api/integrity-review", async (req, res) => {
-  const { submission, historicalSubmissions } = req.body;
+// Title of a stored submission (submissions keep the title as a 'title' paragraph).
+const submissionTitle = (data: any) =>
+  data?.document?.paragraphs?.find((p: any) => p?.kind === "title")?.text || data?.title || "Untitled";
 
-  if (!submission) {
-    return res.status(400).json({ error: "No submission provided" });
+app.post("/api/integrity-review", requireAuth, aiRateLimit, async (req: any, res) => {
+  // The browser sends only the submission id; everything else is loaded from Firestore here.
+  const submissionId = req.body?.submissionId;
+  if (typeof submissionId !== "string" || !submissionId || submissionId.length > 128 || submissionId.includes("/")) {
+    return res.status(400).json({ error: "submissionId is required" });
   }
 
   try {
+    const submissionSnap = await adminDb.collection("submissions").doc(submissionId).get();
+    if (!submissionSnap.exists) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+    const submission: any = submissionSnap.data();
+
+    // Only the teacher of the submission's class, or a platform admin, may run a review.
+    let isClassTeacher = false;
+    if (typeof submission.classId === "string" && submission.classId && !submission.classId.includes("/")) {
+      const classSnap = await adminDb.collection("classes").doc(submission.classId).get();
+      isClassTeacher = classSnap.exists && classSnap.data()?.teacherId === req.user.uid;
+    }
+    let isPlatformAdmin = false;
+    if (!isClassTeacher) {
+      const callerSnap = await adminDb.collection("users").doc(req.user.uid).get();
+      isPlatformAdmin = callerSnap.exists && callerSnap.data()?.role === "ADMIN";
+    }
+    if (!isClassTeacher && !isPlatformAdmin) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    // Up to 5 earlier submissions by the same student, newest first (sorted here so no
+    // extra Firestore index is needed).
+    const historySnap = await adminDb.collection("submissions")
+      .where("studentId", "==", submission.studentId)
+      .get();
+    const historicalSubmissions = historySnap.docs
+      .filter((d) => d.id !== submissionId && (d.data().timestamp || 0) < (submission.timestamp || 0))
+      .sort((a, b) => (b.data().timestamp || 0) - (a.data().timestamp || 0))
+      .slice(0, 5)
+      .map((d) => {
+        const h = d.data();
+        return { title: submissionTitle(h), mode: h.mode, timestamp: h.timestamp, integrity: h.integrity, document: h.document };
+      });
+
     const ai = getAi();
     const prompt = `
       You are an expert writing process analyst assisting educators in understanding how a piece of writing was developed. Analyze the following writing process data for a student submission.
       
       SUBMISSION DATA:
-      Title: ${submission.title || 'Untitled'}
+      Title: ${submissionTitle(submission)}
       Student Name: ${submission.studentName}
       Writing Mode: ${submission.mode}
       Integrity Report: ${JSON.stringify(submission.integrity)}
@@ -385,8 +499,8 @@ app.post("/api/integrity-review", async (req, res) => {
       timestamp: Date.now()
     });
   } catch (error: any) {
-    console.error("Integrity Review error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate integrity review" });
+    console.error("Integrity Review error:", error?.message);
+    res.status(500).json({ error: "Failed to generate integrity review" });
   }
 });
 

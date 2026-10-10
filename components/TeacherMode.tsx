@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Submission, ThinkingEvent, Classroom, UserRole, UserProfile, UserStatus } from '../types';
 import { db } from '../services/firebase';
+import { authedFetch } from '../services/geminiService';
 import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, deleteDoc, arrayUnion, arrayRemove, setDoc, getDocs, increment } from 'firebase/firestore';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
@@ -298,18 +299,8 @@ const TeacherMode: React.FC<TeacherModeProps> = ({ submissions, userProfile }) =
 
     setIsReviewing(true);
     try {
-      // Get historical submissions for this student to provide context
-      const historical = submissions.filter(s => 
-        s.studentId === submission.studentId && 
-        s.id !== submission.id && 
-        s.timestamp < submission.timestamp
-      ).slice(0, 5); // Limit to last 5 for context
-
-      const response = await fetch('/api/integrity-review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submission, historicalSubmissions: historical })
-      });
+      // The server loads the submission and the student's earlier submissions itself
+      const response = await authedFetch('/api/integrity-review', { submissionId: submission.id });
 
       if (!response.ok) throw new Error("API failed");
       const reviewData = await response.json();

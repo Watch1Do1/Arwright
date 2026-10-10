@@ -1,7 +1,18 @@
 
 import { WritingMode, MentorPersonality } from "../types";
-import { db } from "./firebase";
+import { db, auth } from "./firebase";
 import { collection, addDoc } from "firebase/firestore";
+
+// POST JSON to our server with the signed-in user's Firebase ID token.
+export const authedFetch = async (url: string, body: unknown): Promise<Response> => {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) throw new Error("Not signed in");
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify(body)
+  });
+};
 
 const logUsage = async (userId: string, model: string, tokens: number, feature: string) => {
   try {
@@ -26,11 +37,7 @@ export const getTutorFeedback = async (
   userId: string = "unknown-user"
 ): Promise<any> => {
   try {
-    const response = await fetch("/api/gemini/feedback", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, context, userQuestion, mode, personality, userId })
-    });
+    const response = await authedFetch("/api/gemini/feedback", { content, context, userQuestion, mode, personality });
 
     if (!response.ok) throw new Error("Feedback API failed");
     const data = await response.json();
@@ -51,11 +58,7 @@ export const getTutorFeedback = async (
 
 export const generateQuiz = async (content: string, focusArea: string, userId: string = "unknown-user"): Promise<any> => {
   try {
-    const response = await fetch("/api/gemini/quiz", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, focusArea, userId })
-    });
+    const response = await authedFetch("/api/gemini/quiz", { content, focusArea });
 
     if (!response.ok) throw new Error("Quiz API failed");
     const data = await response.json();
@@ -71,11 +74,7 @@ export const generateQuiz = async (content: string, focusArea: string, userId: s
 
 export const summarizeSubmissionForTeacher = async (submission: string, mode: WritingMode = WritingMode.ACADEMIC, userId: string = "unknown-user"): Promise<string> => {
   try {
-    const response = await fetch("/api/gemini/summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ submission, mode, userId })
-    });
+    const response = await authedFetch("/api/gemini/summary", { submission, mode });
 
     if (!response.ok) throw new Error("Summary API failed");
     const data = await response.json();
@@ -90,11 +89,7 @@ export const summarizeSubmissionForTeacher = async (submission: string, mode: Wr
 
 export const estimateWritingProficiency = async (submission: string, mode: WritingMode = WritingMode.ACADEMIC, userId: string = "unknown-user"): Promise<any> => {
   try {
-    const response = await fetch("/api/gemini/proficiency", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ submission, mode, userId })
-    });
+    const response = await authedFetch("/api/gemini/proficiency", { submission, mode });
 
     if (!response.ok) throw new Error("Proficiency API failed");
     const data = await response.json();
