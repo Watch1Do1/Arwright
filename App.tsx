@@ -21,11 +21,12 @@ import AdminMode from './components/AdminMode';
 import SchoolAdminMode from './components/SchoolAdminMode';
 import AcceptInvite from './components/AcceptInvite';
 import { motion, AnimatePresence } from 'motion/react';
+import { DEMO_UID, ENABLE_DEMO, isDemoUid } from './services/demo';
 
 const DEFAULT_DEMO_SUBMISSIONS: Submission[] = [
   {
     id: 'demo-sub-1',
-    studentId: 'demo-user-123',
+    studentId: DEMO_UID,
     studentName: 'Julian Thorne',
     document: {
       paragraphs: [
@@ -62,8 +63,6 @@ const App: React.FC = () => {
   const [guestUser, setGuestUser] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [showDemoLogin, setShowDemoLogin] = useState(false);
-  const [demoCohortCode, setDemoCohortCode] = useState('');
   const [demoError, setDemoError] = useState('');
   const [enrollmentCode, setEnrollmentCode] = useState('');
   const [onboardingError, setOnboardingError] = useState('');
@@ -109,9 +108,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('demo') === 'true' && !activeUser && !loading) {
-      setDemoCohortCode('ARWRIGHT');
-      setShowDemoLogin(true);
+    if (ENABLE_DEMO && params.get('demo') === 'true' && !activeUser && !loading) {
+      handleGuestLogin();
     }
   }, [loading, activeUser]);
 
@@ -308,128 +306,47 @@ const App: React.FC = () => {
     return () => unsubscribeAuth();
   }, []);
 
-  const handleGuestLogin = async (bypassCode?: string | any) => {
-    const codeToUse = (typeof bypassCode === 'string' ? bypassCode : '') || demoCohortCode;
-    
-    if (!codeToUse || typeof codeToUse !== 'string' || !codeToUse.trim()) {
-      setDemoError("Cohort Code is required for demo access.");
-      return;
-    }
-
+  // Demo mode is fully offline: a local profile and sample essay, nothing stored in Firestore.
+  const handleGuestLogin = () => {
+    if (!ENABLE_DEMO) return;
     setDemoError("");
-    setLoading(true);
 
-    try {
-      let cohortData;
-      let cohortId;
+    const demoUser = {
+      uid: DEMO_UID,
+      displayName: 'Arwright Demo',
+      photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=Arwright`,
+      email: 'demo@arwright.edu'
+    };
 
-      const isMasterBypass = codeToUse.toUpperCase().trim() === 'ARWRIGHT';
+    const demoProfile: UserProfile = {
+      uid: demoUser.uid,
+      email: demoUser.email,
+      displayName: demoUser.displayName,
+      photoURL: demoUser.photoURL,
+      role: UserRole.STUDENT,
+      status: UserStatus.ACTIVE_STUDENT,
+      createdAt: Date.now(),
+      classIds: [],
+      schoolId: 'demo-school-id',
+      cohortId: 'demo-cohort-id',
+      graduationDate: Date.now() + 31536000000 // 1 year
+    };
 
-      if (isMasterBypass) {
-        cohortData = {
-          schoolId: 'demo-school-id',
-          graduationDate: Date.now() + 31536000000 // 1 year
-        };
-        cohortId = 'demo-cohort-id';
-      } else {
-        try {
-          const cohortsRef = collection(db, 'cohorts');
-          const qCohort = query(cohortsRef, where('cohortCode', '==', codeToUse.toUpperCase().trim()));
-          const cohortSnap = await getDocs(qCohort);
-
-          if (cohortSnap.empty) {
-            setDemoError("Invalid cohort code. Demo access requires a valid institution code.");
-            setLoading(false);
-            return;
-          }
-
-          const cohortDoc = cohortSnap.docs[0];
-          cohortData = cohortDoc.data();
-          cohortId = cohortDoc.id;
-        } catch (dbErr) {
-          console.warn("Firestore database not connected. Falling back into offline sandbox state:", dbErr);
-          cohortData = {
-            schoolId: 'demo-school-id',
-            graduationDate: Date.now() + 31536000000 // 1 year
-          };
-          cohortId = 'demo-cohort-id';
-        }
-      }
-
-      const demoUser = {
-        uid: 'demo-user-123',
-        displayName: 'Arwright Demo',
-        photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=Arwright`,
-        email: 'demo@arwright.edu'
-      };
-      
-      const demoProfile: UserProfile = {
-        uid: demoUser.uid,
-        email: demoUser.email,
-        displayName: demoUser.displayName,
-        photoURL: demoUser.photoURL,
-        role: UserRole.STUDENT,
-        status: UserStatus.ACTIVE_STUDENT,
-        createdAt: Date.now(),
-        classIds: [],
-        schoolId: cohortData.schoolId,
-        cohortId: cohortId,
-        graduationDate: cohortData.graduationDate
-      };
-
-      setGuestUser(demoUser);
-      setUserProfile(demoProfile);
-      setRole(UserRole.STUDENT);
-      setLoading(false);
-
-      // Seed a submission for the demo user if it doesn't exist
-      try {
-        const q = query(collection(db, 'submissions'), where('studentId', '==', 'demo-user-123'), limit(1));
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) {
-          await addDoc(collection(db, 'submissions'), {
-            studentId: 'demo-user-123',
-            studentName: 'Julian Thorne',
-            document: {
-              paragraphs: [
-                { id: 'p1', kind: 'title', text: 'The Paradox of Modern Efficiency' },
-                { id: 'p2', kind: 'body', text: 'Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency...' }
-              ]
-            },
-            timestamp: Date.now() - 86400000,
-            mode: WritingMode.ACADEMIC,
-            integrity: {
-              keystrokeCount: 120,
-              pasteEvents: 1,
-              pasteCharacters: 50,
-              averageWPM: 45,
-              flagged: true,
-              burstAlerts: 2
-            },
-            tutorSummary: "Strong philosophical inquiry. The student engages deeply with the prompt, though the conclusion remains somewhat derivative.",
-            thinkingTrace: [
-              { t: Date.now() - 900000, strokes: 0, len: 0, content: "" },
-              { t: Date.now() - 850000, strokes: 15, len: 15, content: "Modern efficien" },
-              { t: Date.now() - 800000, strokes: 35, len: 35, content: "Modern efficiency is often heralded" },
-              { t: Date.now() - 750000, strokes: 50, len: 85, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, ", paste: 50 },
-              { t: Date.now() - 700000, strokes: 70, len: 110, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the ", ai: { query: "How to describe loss of agency?", focus: "Voice & Tone" } },
-              { t: Date.now() - 650000, strokes: 120, len: 180, content: "Modern efficiency is often heralded as the pinnacle of industrial progress. However, when we strip away the machinery, we find a curious hollow at the center of human agency..." }
-            ]
-          });
-        }
-      } catch (seedErr) {
-        console.warn("Failed to seed submissions to database, running in offline sandbox state:", seedErr);
-      }
-    } catch (err) {
-      console.error("Demo login error:", err);
-      setDemoError("Demo login failed. Check your connection.");
-      setLoading(false);
-    }
+    setGuestUser(demoUser);
+    setUserProfile(demoProfile);
+    setRole(UserRole.STUDENT);
+    setLoading(false);
   };
 
   useEffect(() => {
     if (!activeUser || !userProfile) {
       setSubmissions([]);
+      return;
+    }
+
+    // Demo mode: local sample data only
+    if (isDemoUid(activeUser.uid)) {
+      setSubmissions(DEFAULT_DEMO_SUBMISSIONS);
       return;
     }
 
@@ -481,10 +398,6 @@ const App: React.FC = () => {
       setSubmissions(data);
     }, (error) => {
       console.error("Firestore Listen Error:", error);
-      // Fallback to local offline submissions if in demo user context or when offline
-      if (activeUser.uid === 'demo-user-123') {
-        setSubmissions(DEFAULT_DEMO_SUBMISSIONS);
-      }
     });
 
     return () => unsubscribeSubmissions();
@@ -497,6 +410,22 @@ const App: React.FC = () => {
     if (!docModel?.paragraphs || docModel.paragraphs.length === 0) {
       console.error("CRITICAL: Structural Loss Detected. Aborting save to prevent data corruption.");
       alert("Submission failed: Document structure is invalid. Please try refreshing.");
+      return;
+    }
+
+    // Demo mode: keep the submission in this browser only (no database, no AI)
+    if (isDemoUid(activeUser.uid)) {
+      setSubmissions(prev => [{
+        id: `demo-sub-${Date.now()}`,
+        studentId: DEMO_UID,
+        studentName: activeUser.displayName || 'Arwright Demo',
+        document: docModel,
+        timestamp: Date.now(),
+        integrity,
+        mode,
+        thinkingTrace,
+        classId: classId || undefined
+      } as Submission, ...prev]);
       return;
     }
 
@@ -575,7 +504,7 @@ const App: React.FC = () => {
               <div className="p-4 bg-rose-50/80 border border-rose-200/50 rounded-2xl text-left animate-in fade-in slide-in-from-top-1 duration-200">
                 <p className="text-[10px] text-rose-500 font-black uppercase tracking-widest mb-1">Authentication Sandbox Alert</p>
                 <p className="text-stone-600 text-xs leading-relaxed font-semibold">
-                  {authError.includes("api-key-not-valid") || authError.includes("invalid-api-key") ? (
+                  {ENABLE_DEMO && (authError.includes("api-key-not-valid") || authError.includes("invalid-api-key")) ? (
                     <span>
                       Firebase has not been provisioned with standard API keys yet. Please use the <strong className="text-indigo-600 font-black uppercase">Demo / Guest Access</strong> box below to enter and experience the writing platform instantly, or click "Set up Firebase" in AI Studio!
                     </span>
@@ -592,57 +521,17 @@ const App: React.FC = () => {
               <div className="flex-1 h-px bg-stone-100"></div>
             </div>
 
-            {!showDemoLogin ? (
-              <button 
-                onClick={() => setShowDemoLogin(true)}
-                className="w-full bg-stone-900 text-white flex items-center justify-center space-x-3 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-stone-800 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg"
-              >
-                <UserIcon size={20} />
-                <span>Demo / Guest Access</span>
-              </button>
-            ) : (
-              <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <input 
-                  type="text" 
-                  placeholder="Enter Cohort Code"
-                  className="w-full px-6 py-4 bg-stone-50 border border-stone-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center font-black uppercase tracking-widest placeholder:opacity-30"
-                  value={demoCohortCode}
-                  onChange={e => setDemoCohortCode(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleGuestLogin()}
-                  autoFocus
-                />
+            {ENABLE_DEMO && (
+              <>
+                <button 
+                  onClick={handleGuestLogin}
+                  className="w-full bg-stone-900 text-white flex items-center justify-center space-x-3 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-stone-800 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg"
+                >
+                  <UserIcon size={20} />
+                  <span>Demo / Guest Access</span>
+                </button>
                 {demoError && <p className="text-rose-500 text-[10px] font-black uppercase tracking-widest">{demoError}</p>}
-                
-                <div className="flex space-x-3">
-                  <button 
-                    onClick={() => {
-                      setShowDemoLogin(false);
-                      setDemoError("");
-                    }}
-                    className="flex-1 py-4 bg-stone-100 text-stone-500 rounded-2xl font-black uppercase tracking-widest hover:bg-stone-200 transition-all"
-                  >
-                    Back
-                  </button>
-                  <button 
-                    onClick={handleGuestLogin}
-                    className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-indigo-200 hover:bg-indigo-500 transition-all"
-                  >
-                    Enter Demo
-                  </button>
-                </div>
-
-                <div className="pt-2">
-                  <button 
-                    onClick={() => {
-                      setDemoCohortCode('ARWRIGHT');
-                      handleGuestLogin('ARWRIGHT');
-                    }}
-                    className="text-[9px] font-black uppercase tracking-[0.2em] text-stone-300 hover:text-indigo-400 transition-colors"
-                  >
-                    Enter Public Showcase Sandbox
-                   </button>
-                </div>
-              </div>
+              </>
             )}
            </div>
 
@@ -663,8 +552,6 @@ const App: React.FC = () => {
         if (user) signOut(auth);
         setGuestUser(null);
         setUserProfile(null);
-        setShowDemoLogin(false);
-        setDemoCohortCode('');
         setDemoError('');
       }}
     >

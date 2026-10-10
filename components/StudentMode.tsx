@@ -8,6 +8,7 @@ import {
 } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../services/firebase';
+import { isDemoUid } from '../services/demo';
 import { collection, query, where, getDocs, doc, updateDoc, increment, arrayUnion, onSnapshot, addDoc } from 'firebase/firestore';
 import WritingEditor from './WritingEditor';
 import PDFPreviewModal from './PDFPreviewModal';
@@ -213,6 +214,10 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
   const handleJoinClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!classCode.trim()) return;
+    if (isDemoUid(userProfile.uid)) {
+      setJoinError('Joining classes is turned off in the demo.');
+      return;
+    }
     setJoinError('');
     setIsJoiningClass(true);
 
@@ -462,6 +467,19 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
       return;
     }
 
+    // Demo mode: AI coaching needs a real signed-in account
+    if (isDemoUid(user?.uid)) {
+      const demoItem: FeedbackItem = {
+        id: uuidv4(),
+        feedback: "AI coaching is turned off in the demo. Sign in with your school account to use it.",
+        focusArea: 'Demo',
+        timestamp: Date.now()
+      };
+      setFeedbackHistory(prev => [demoItem, ...prev]);
+      setUserQuery('');
+      return;
+    }
+
     const query = queryOverride || userQuery;
     const documentText = writingDoc.paragraphs.map(p => p.text).join('\n\n');
     const titleText = writingDoc.paragraphs.find(p => p.kind === 'title')?.text || 'Untitled';
@@ -566,10 +584,13 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
     const triggerDeleteCount = deleteCount.current;
     const eventTime = Date.now();
 
+    // Demo mode and signed-out sessions never write nudge events
+    if (!user?.uid || isDemoUid(user.uid)) return;
+
     // Step 6: Log the "nudge_triggered" event
     try {
       await addDoc(collection(db, 'nudge_events'), {
-        userId: user?.uid || 'demo-user-123',
+        userId: user.uid,
         eventType: "nudge_triggered",
         trigger: "intro_struggle",
         nudgeId: "intro_main_idea_v1",
@@ -591,7 +612,7 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
 
       try {
         await addDoc(collection(db, 'nudge_events'), {
-          userId: user?.uid || 'demo-user-123',
+          userId: user.uid,
           eventType: "nudge_outcome",
           nudgeId: "intro_main_idea_v1",
           wordsAddedAfter: wordsAdded,
@@ -661,6 +682,11 @@ const StudentMode: React.FC<StudentModeProps> = ({ onSave, isDarkMode, setIsDark
   };
 
   const handleSaveProfile = async () => {
+    if (isDemoUid(userProfile.uid)) {
+      alert("Profile changes are not saved in the demo.");
+      setIsProfileModalOpen(false);
+      return;
+    }
     setIsSavingProfile(true);
     try {
       const updates: any = {

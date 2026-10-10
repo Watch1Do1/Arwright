@@ -2,6 +2,7 @@
 import { WritingMode, MentorPersonality } from "../types";
 import { db, auth } from "./firebase";
 import { collection, addDoc } from "firebase/firestore";
+import { isDemoUid } from "./demo";
 
 // POST JSON to our server with the signed-in user's Firebase ID token.
 export const authedFetch = async (url: string, body: unknown): Promise<Response> => {
@@ -15,6 +16,7 @@ export const authedFetch = async (url: string, body: unknown): Promise<Response>
 };
 
 const logUsage = async (userId: string, model: string, tokens: number, feature: string) => {
+  if (isDemoUid(userId)) return; // demo mode never writes to the database
   try {
     await addDoc(collection(db, "ai_logs"), {
       userId,
